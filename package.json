@@ -1,0 +1,21 @@
+{
+  "name": "regression-tester",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "fs-extra": "^11.1.1",
+    "jimp": "^0.22.8",
+    "looks-same": "^8.1.0",
+    "pixelmatch": "^5.3.0",
+    "puppeteer": "^19.11.1",
+    "resemblejs": "^5.0.0",
+    "sharp": "^0.32.1",
+    "sitemapper": "^3.2.6"
+  }
+}
