@@ -7,7 +7,7 @@ const fs = require("fs")
 // The threshold below determines the percentage of pixels that can be different before
 // we consider the screenshot to be different. A lower value means the script will be
 // more sensitive to small changes, but may also generate more false positives.
-const threshold = 0.95
+const threshold = 0.75
 
 ;(async () => {
   const browser = await puppeteer.launch()
