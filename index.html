@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+  <title>Content Change Detection Dashboard</title>
+</head>
+
+<body>
+  <div class="container mt-5">
+    <h1>Content Change Detection Dashboard</h1>
+    <div class="mb-3">
+      <button id="runScriptButton" class="btn btn-primary">Run Script</button>
+    </div>
+    <div id="logOutput" class="alert alert-secondary" role="alert"></div>
+  </div>
+
+  <script>
+    // Function to update the log output
+    function updateLogOutput(message) {
+      const logOutput = document.getElementById("logOutput");
+      logOutput.innerText += message + "\n";
+    }
+
+    // Function to trigger the script
+    async function runScript() {
+      // Clear the log output
+      document.getElementById("logOutput").innerText = "";
+
+      // Fetch the sitemap index XML
+      const sitemapIndexUrl = "https://lcef.org/sitemap_index.xml";
+      const sitemapIndexResponse = await fetch(sitemapIndexUrl);
+      const sitemapIndexXml = await sitemapIndexResponse.text();
+
+      // Extract sitemap URLs from the sitemap index
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(sitemapIndexXml, "text/xml");
+      const sitemapNodes = doc.getElementsByTagName("loc");
+      const sitemapUrls = Array.from(sitemapNodes).map((node) => node.textContent);
+
+      // Array to store the promises for content changes
+      const promises = [];
+
+      // Iterate over each sitemap URL
+      for (const sitemapUrl of sitemapUrls) {
+        // Fetch the sitemap XML
+        const sitemapResponse = await fetch(sitemapUrl);
+        const sitemapXml = await sitemapResponse.text();
+
+        // Extract URLs from the sitemap
+        const doc = parser.parseFromString(sitemapXml, "text/xml");
+        const urlNodes = doc.getElementsByTagName("loc");
+        const urls = Array.from(urlNodes).map((node) => node.textContent);
+
+        // Iterate over each URL and check for content changes
+        for (const url of urls) {
+          promises.push(checkContentChanges(url));
+        }
+      }
+
+      // Wait for all promises to resolve
+      await Promise.all(promises);
+
+      // Write the changed URLs to a CSV file
+      const csvData = changedUrls.join("\n");
+      const blob = new Blob([csvData], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const downloadLink = document.createElement("a");
+      downloadLink.href = url;
+      downloadLink.download = "changed_urls.csv";
+      downloadLink.click();
+
+      updateLogOutput("Changed URLs exported to changed_urls.csv");
+    }
+
+    // Function to check if the page content has changed
+    async function checkContentChanges(url) {
+      const response = await fetch(url);
+      const content = await response.text();
+      const storedHash = localStorage.getItem(url);
+
+      const newHash = calculateHash(content);
+
+      if (storedHash !== newHash.toString()) {
+        // Page content has changed
+        updateLogOutput(`Page content has changed for URL: ${url}`);
+
+        // Store the updated hash
+        localStorage.setItem(url, newHash.toString());
+
+        // Add the changed URL to the array
+        changedUrls.push(url);
+      } else {
+        // Page content remains the same
+        updateLogOutput(`Page content has not changed for URL: ${url}`);
+      }
+    }
+
+    // Function to calculate the MD5 hash of a string
+    function calculateHash(content) {
+      let hash = 0;
+      let i, chr;
+      if (content.length === 0) return hash;
+      for (i = 0; i < content.length; i++) {
+        chr = content.charCodeAt(i);
+        hash = (hash << 5) - hash + chr;
+        hash |= 0; // Convert to 32-bit integer
+      }
+      return hash;
+    }
+
+    // Attach click event listener to the runScriptButton
+    document.getElementById("runScriptButton").addEventListener("click", runScript);
+  </script>
+</body>
+
+</html>

@@ -1,87 +1,136 @@
-const puppeteer = require("puppeteer");
-const Sitemapper = require("sitemapper");
+const fetch = require("isomorphic-fetch");
+const { DOMParser } = require("xmldom");
+const storage = require("node-persist");
+const fs = require("fs");
 
-(async () => {
-  const browser = await puppeteer.launch();
-  const page = await browser.newPage();
+// Initialize storage
+storage.init();
 
-  // Set viewport width to 100% of the desktop width
-  await page.setViewport({ width: 1920, height: 1080 });
+// Array to store the changed URLs
+const changedUrls = [];
 
-  const sitemapUrl = "https://lcef.org/sitemap_index.xml";
-  const sitemap = new Sitemapper({
-    url: sitemapUrl,
-    timeout: 300000, // Set a 5-minute timeout for parsing
-  });
+// Function to fetch the sitemap index XML
+async function fetchSitemapIndex(url) {
+  const response = await fetch(url);
+  const xml = await response.text();
+  return xml;
+}
+
+// Function to extract sitemap URLs from the sitemap index XML
+function extractSitemapUrls(sitemapIndexXml) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(sitemapIndexXml, "text/xml");
+  const sitemapNodes = doc.getElementsByTagName("loc");
+  const sitemapUrls = Array.from(sitemapNodes).map((node) => node.textContent);
+  return sitemapUrls;
+}
+
+// Function to fetch the sitemap XML
+async function fetchSitemap(url) {
+  const response = await fetch(url);
+  const xml = await response.text();
+  return xml;
+}
+
+// Function to extract URLs from the sitemap XML
+function extractUrlsFromSitemap(xml) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xml, "text/xml");
+  const urlNodes = doc.getElementsByTagName("loc");
+  const urls = Array.from(urlNodes).map((node) => node.textContent);
+  return urls;
+}
+
+// Function to calculate the MD5 hash of a string
+function calculateHash(content) {
+  let hash = 0,
+    i,
+    chr;
+  if (content.length === 0) return hash;
+  for (i = 0; i < content.length; i++) {
+    chr = content.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0; // Convert to 32-bit integer
+  }
+  return hash;
+}
+
+// Function to fetch the page content with timeout
+async function fetchPageContent(url, timeout = 480000) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const sitemapUrls = await sitemap.fetch();
-    console.log(sitemapUrls);
+    const response = await fetch(url, { signal: controller.signal });
+    const content = await response.text();
+    clearTimeout(timeoutId);
+    return content;
+  } catch (error) {
+    clearTimeout(timeoutId);
+    throw error;
+  }
+}
 
-    // Loop through each page on the sitemap
-    for (const url of sitemapUrls.sites) {
-      try {
-        await page.goto(url, { waitUntil: "networkidle2", timeout: 60000 });
+// Function to check if the page content has changed
+async function checkContentChanges(url) {
+  const storedHash = await storage.getItem(url);
 
-        // Wait for a short delay after page navigation to ensure all CSS styles are applied
-        await page.waitForTimeout(20000); // Adjust the delay as needed
+  return fetchPageContent(url)
+    .then((newContent) => {
+      const newHash = calculateHash(newContent);
 
-        // Take a screenshot of the page
-        await page.screenshot({
-          path: `screenshots/${url.replace(/[/\\?%*:|"<>]/g, "_")}.png`,
-          fullPage: true, // Capture the entire height of the page
-        });
+      if (storedHash !== newHash.toString()) {
+        // Page content has changed
+        console.log(`Page content has changed for URL: ${url}`);
 
-        console.log(`Screenshot captured for page: ${url}`);
+        // Store the updated hash
+        storage.setItem(url, newHash.toString());
 
-        // Look for clickable link with class "rev-btn"
-        const popupLink = await page.$(".rev-btn");
-        if (popupLink) {
-          // Scroll the page to the element
-          await page.evaluate((element) => {
-            element.scrollIntoView();
-          }, popupLink);
+        // Add the changed URL to the array
+        changedUrls.push(url);
+      } else {
+        // Page content remains the same
+        console.log(`Page content has not changed for URL: ${url}`);
+      }
+    })
+    .catch((error) => {
+      console.error(`Error fetching page content for URL: ${url}`, error);
+    });
+}
 
-          // Click the element using page.evaluate
-          await page.evaluate((element) => {
-            element.click();
-          }, popupLink);
+// Fetch the sitemap index XML
+const sitemapIndexUrl = "https://lcef.org/sitemap_index.xml";
+fetchSitemapIndex(sitemapIndexUrl)
+  .then(async (sitemapIndexXml) => {
+    // Extract sitemap URLs from the sitemap index
+    const sitemapUrls = extractSitemapUrls(sitemapIndexXml);
 
-          // Wait for a short delay to allow the popup to fully load
-          await page.waitForTimeout(4000); // Adjust the delay as needed
+    // Array to store the promises for content changes
+    const promises = [];
 
-          // Look for element with class "spu-content"
-          const popupContent = await page.$(".spu-container");
-          if (popupContent) {
-            const popupFilename = `screenshots/${url.replace(
-              /[/\\?%*:|"<>]/g,
-              "_"
-            )}_popup.png`;
-            await page.screenshot({
-              path: popupFilename,
-              fullPage: true, // Capture the entire height of the page with the popup
-            });
-            console.log(`Screenshot captured for popup on page: ${url}`);
-          } else {
-            console.log(`No popup content found for page: ${url}`);
-          }
-        } else {
-          console.log(`No popup link found for page: ${url}`);
-        }
-      } catch (error) {
-        if (
-          error.name === "TimeoutError" &&
-          error.message.includes("Navigation timeout")
-        ) {
-          console.log(`Timeout occurred for page: ${url}`);
-        } else {
-          throw error;
-        }
+    // Iterate over each sitemap URL
+    for (const sitemapUrl of sitemapUrls) {
+      // Fetch the sitemap XML
+      const sitemapXml = await fetchSitemap(sitemapUrl);
+
+      // Extract URLs from the sitemap
+      const urls = extractUrlsFromSitemap(sitemapXml);
+
+      // Iterate over each URL and check for content changes
+      for (const url of urls) {
+        promises.push(checkContentChanges(url));
       }
     }
-  } catch (error) {
-    console.error(error);
-  }
 
-  await browser.close();
-})();
+    // Wait for all promises to resolve
+    await Promise.all(promises);
+
+    // Write the changed URLs to a CSV file
+    const csvData = changedUrls.join("\n");
+    fs.writeFileSync("changed_urls.csv", csvData);
+
+    console.log("Changed URLs exported to changed_urls.csv");
+  })
+  .catch((error) => {
+    console.error("Error fetching sitemap index:", error);
+  });
